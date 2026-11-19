@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flock Agency Transparency Map</title>
+<meta name="description" content="Interactive map of Flock Safety transparency portals: how much each agency discloses and how far it says it shares license-plate data, March and November 2026.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+<style>
+  :root {
+    /* semantic tokens */
+    --color-ink: #17202a;
+    --color-ink-muted: #4f5b67;      /* 7.0:1 on white */
+    --color-surface: #ffffff;
+    --color-surface-alt: #f3f5f7;
+    --color-line: #d5dbe1;
+    --color-primary: #1f6aa5;        /* 5.6:1 on white */
+    --color-on-primary: #ffffff;
+    --color-focus: #1f6aa5;
+    --color-yes: #1a7f37;
+    --color-no: #b42318;
+    --color-warn: #9a4f00;
+    --color-select: #6d28d9;
+    --fill-6: #2c7bb6; --fill-5: #abd9e9; --fill-4: #fdae61; --fill-03: #d7191c;
+    /* type + space scales */
+    --fs-xs: 12.5px; --fs-sm: 14px; --fs-md: 15.5px; --fs-lg: 18px; --fs-xl: 21px;
+    --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px;
+    --radius: 10px;
+    --shadow: 0 8px 28px rgba(16, 24, 40, .14), 0 1px 3px rgba(16, 24, 40, .08);
+    /* z scale */
+    --z-panel: 1000; --z-sheet: 1100; --z-overlay: 1200;
+    --side-w: 300px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font: var(--fs-md)/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--color-ink); background: var(--color-surface-alt); -webkit-font-smoothing: antialiased; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; touch-action: manipulation; }
+  :focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; border-radius: 4px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .skip { position: absolute; left: var(--sp-3); top: -60px; z-index: var(--z-overlay); background: var(--color-primary); color: var(--color-on-primary); padding: var(--sp-2) var(--sp-3); border-radius: 6px; }
+  .skip:focus { top: var(--sp-3); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  #app { display: grid; grid-template-columns: var(--side-w) 1fr; grid-template-rows: auto 1fr; height: 100dvh; }
+
+  /* ---------- header ---------- */
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--sp-3) var(--sp-4); padding: var(--sp-2) var(--sp-4); background: var(--color-surface); border-bottom: 1px solid var(--color-line); flex-wrap: wrap; min-height: 60px; }
+  .brand { display: flex; flex-direction: column; min-width: 0; margin-right: auto; }
+  .brand h1 { font-size: var(--fs-lg); line-height: 1.25; margin: 0; font-weight: 700; text-wrap: balance; }
+  .brand p { margin: 0; font-size: var(--fs-sm); color: var(--color-ink-muted); }
+  .seg { display: inline-flex; background: var(--color-surface-alt); border: 1px solid var(--color-line); border-radius: 9px; padding: 3px; gap: 2px; }
+  .seg button { border: 0; background: transparent; padding: 0 var(--sp-3); min-height: 36px; border-radius: 7px; color: var(--color-ink-muted); font-weight: 550; transition: background-color .15s ease, color .15s ease; white-space: nowrap; }
+  .seg button:hover { color: var(--color-ink); }
+  .seg button[aria-pressed="true"] { background: var(--color-surface); color: var(--color-ink); box-shadow: 0 1px 3px rgba(16,24,40,.15); }
+  .search { position: relative; }
+  .search input { width: 240px; min-height: 40px; padding: 0 var(--sp-3) 0 34px; border: 1px solid var(--color-line); border-radius: 9px; background: var(--color-surface); }
+  .search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--color-ink-muted); pointer-events: none; }
+  .search-msg { position: absolute; top: 100%; left: 0; margin-top: 4px; font-size: var(--fs-xs); color: var(--color-no); white-space: nowrap; }
+  #filters-btn { display: none; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 var(--sp-3); border: 1px solid var(--color-line); border-radius: 9px; background: var(--color-surface); font-weight: 550; }
+  .btn:hover { background: var(--color-surface-alt); }
+  .btn .badge { background: var(--color-primary); color: var(--color-on-primary); border-radius: 999px; font-size: var(--fs-xs); padding: 0 7px; min-width: 20px; text-align: center; }
+
+  /* ---------- sidebar ---------- */
+  aside { overflow-y: auto; background: var(--color-surface); border-right: 1px solid var(--color-line); padding: var(--sp-4) var(--sp-4) var(--sp-5); overscroll-behavior: contain; }
+  .side-head { display: none; }
+  aside section + section { margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--color-line); }
+  aside h2 { font-size: var(--fs-sm); font-weight: 700; margin: 0 0 var(--sp-2); display: flex; align-items: center; justify-content: space-between; }
+  .opt { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; cursor: pointer; font-size: var(--fs-sm); border-radius: 6px; padding: 0 4px; margin: 0 -4px; }
+  .opt:hover { background: var(--color-surface-alt); }
+  .opt input { width: 17px; height: 17px; margin: 0; accent-color: var(--color-primary); flex: none; }
+  .opt svg { flex: none; }
+  .opt .n { margin-left: auto; color: var(--color-ink-muted); font-size: var(--fs-xs); }
+  .opt.disabled { opacity: .45; cursor: not-allowed; }
+  select { width: 100%; min-height: 40px; padding: 0 var(--sp-2); border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-surface); }
+  .help { font-size: var(--fs-xs); color: var(--color-ink-muted); margin: var(--sp-1) 0 0; line-height: 1.45; }
+  .linkbtn { border: 0; background: none; color: var(--color-primary); font-weight: 600; font-size: var(--fs-sm); padding: 4px 6px; margin: -4px -6px; border-radius: 6px; }
+  .linkbtn:hover { background: var(--color-surface-alt); }
+
+  /* summary */
+  .dist { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--color-surface-alt); margin: var(--sp-2) 0 var(--sp-2); }
+  .dist span { display: block; height: 100%; transition: width .25s ease; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); margin-top: var(--sp-2); }
+  .stat { background: var(--color-surface-alt); border-radius: 8px; padding: var(--sp-2); }
+  .stat b { display: block; font-size: var(--fs-lg); line-height: 1.2; }
+  .stat span { font-size: var(--fs-xs); color: var(--color-ink-muted); line-height: 1.3; display: block; }
+
+  /* ---------- main ---------- */
+  main { position: relative; min-height: 0; }
+  #map { position: absolute; inset: 0; background: var(--color-surface-alt); }
+  #map:focus-visible { outline-offset: -3px; }
+  .marker { background: none; border: 0; display: grid; place-items: center; cursor: pointer; }
+  .marker svg { transition: transform .12s ease; }
+  .marker:hover svg { transform: scale(1.25); }
+  .marker.sel::after { content: ""; position: absolute; inset: 0; border: 3px solid var(--color-select); border-radius: 50%; box-shadow: 0 0 0 2px #fff; }
+  .leaflet-tooltip.tip { font: var(--fs-sm)/1.4 ui-sans-serif, system-ui, sans-serif; padding: 6px 9px; border-radius: 7px; border-color: var(--color-line); box-shadow: var(--shadow); color: var(--color-ink); }
+  .tip small { color: var(--color-ink-muted); }
+
+  /* list view */
+  #list { position: absolute; inset: 0; overflow: auto; background: var(--color-surface); display: none; z-index: 950; }
+  #list.on { display: block; }
+  main.listing #map, main.listing .legend-mini { visibility: hidden; }
+  @media (min-width: 901px) { main.listing.has-detail #list { right: 404px; } }
+  #list table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+  #list th { position: sticky; top: 0; background: var(--color-surface); text-align: left; font-weight: 650; border-bottom: 1px solid var(--color-line); padding: 0; z-index: 1; }
+  #list th button { width: 100%; text-align: left; border: 0; background: none; padding: var(--sp-3); display: flex; gap: 4px; align-items: center; font-weight: 650; white-space: nowrap; }
+  #list th button:hover { background: var(--color-surface-alt); }
+  #list td { padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--color-surface-alt); vertical-align: middle; }
+  #list tbody tr { cursor: pointer; }
+  #list tbody tr:hover { background: var(--color-surface-alt); }
+  #list tbody tr.sel { background: #efe9fd; }
+  #list td.name button { border: 0; background: none; padding: 0; text-align: left; font-weight: 600; color: var(--color-ink); }
+  #list .sym { display: inline-flex; align-items: center; gap: 6px; }
+  .empty { padding: var(--sp-5); text-align: center; color: var(--color-ink-muted); }
+
+  /* details panel */
+  #details { position: absolute; top: var(--sp-3); right: var(--sp-3); bottom: var(--sp-3); width: 380px; max-width: calc(100% - 24px); z-index: var(--z-panel); background: var(--color-surface); border: 1px solid var(--color-line); border-radius: var(--radius); box-shadow: var(--shadow); overflow-y: auto; overscroll-behavior: contain; display: none; }
+  #details.open { display: block; animation: slidein .2s cubic-bezier(.2,.8,.2,1); }
+  @keyframes slidein { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+  .d-head { position: sticky; top: 0; background: var(--color-surface); padding: var(--sp-4) var(--sp-4) var(--sp-3); border-bottom: 1px solid var(--color-line); z-index: 1; }
+  .d-head h2 { margin: 0 44px 2px 0; font-size: var(--fs-xl); line-height: 1.25; text-wrap: balance; }
+  .d-head h2:focus { outline: none; }
+  .d-sub { color: var(--color-ink-muted); font-size: var(--fs-sm); }
+  .iconbtn { position: absolute; top: var(--sp-3); right: var(--sp-3); width: 40px; height: 40px; border: 0; border-radius: 8px; background: var(--color-surface-alt); display: grid; place-items: center; }
+  .iconbtn:hover { background: var(--color-line); }
+  .d-body { padding: 0 var(--sp-4) var(--sp-4); }
+  .d-body h3 { font-size: var(--fs-sm); font-weight: 700; margin: var(--sp-4) 0 var(--sp-2); text-transform: uppercase; letter-spacing: .04em; color: var(--color-ink-muted); }
+  .kv { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: var(--sp-1) var(--sp-3); font-size: var(--fs-sm); margin: 0; }
+  .kv dt { color: var(--color-ink-muted); }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: var(--fs-sm); font-weight: 600; background: var(--color-surface-alt); }
+  .scorecard { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3); border-radius: var(--radius); background: var(--color-surface-alt); margin-top: var(--sp-3); }
+  .scorecard .big { font-size: 30px; font-weight: 750; line-height: 1; }
+  .scorecard .big small { font-size: var(--fs-md); color: var(--color-ink-muted); font-weight: 500; }
+  .meter { display: flex; gap: 3px; margin-top: 6px; }
+  .meter i { width: 18px; height: 6px; border-radius: 3px; background: var(--color-line); }
+  .feat { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 2px var(--sp-2); font-size: var(--fs-sm); padding: 6px 0; border-bottom: 1px solid var(--color-surface-alt); }
+  .feat:last-child { border-bottom: 0; }
+  .feat svg { margin-top: 2px; }
+  .feat .val { overflow-wrap: anywhere; }
+  .feat small { color: var(--color-ink-muted); display: block; font-size: var(--fs-xs); }
+  .muted { color: var(--color-ink-muted); }
+  .warn { color: var(--color-warn); font-weight: 650; }
+  .names { font-size: var(--fs-xs); line-height: 1.5; max-height: 140px; overflow-y: auto; padding-right: 4px; }
+  .compare { display: grid; grid-template-columns: auto 1fr 1fr; gap: 6px var(--sp-3); font-size: var(--fs-sm); align-items: center; }
+  .compare .h { font-size: var(--fs-xs); color: var(--color-ink-muted); font-weight: 650; }
+  .compare .chg { background: #fff4e5; border-radius: 4px; padding: 0 4px; margin: 0 -4px; }
+  a { color: var(--color-primary); }
+
+  /* map overlays */
+  .legend-mini { position: absolute; left: var(--sp-3); bottom: 28px; z-index: 900; background: rgba(255,255,255,.95); border: 1px solid var(--color-line); border-radius: var(--radius); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-xs); box-shadow: var(--shadow); max-width: calc(100% - 24px); }
+  .legend-mini .row { display: flex; flex-wrap: wrap; gap: 4px var(--sp-3); align-items: center; }
+  .legend-mini .row + .row { margin-top: 4px; }
+  .legend-mini span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .legend-mini .note { color: var(--color-ink-muted); margin-top: 4px; }
+  #status { position: absolute; inset: 0; display: grid; place-items: center; z-index: var(--z-overlay); background: rgba(243,245,247,.9); text-align: center; padding: var(--sp-5); }
+  .spinner { width: 28px; height: 28px; border: 3px solid var(--color-line); border-top-color: var(--color-primary); border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto var(--sp-3); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #scrim { display: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  }
+
+  /* ---------- tablet / phone ---------- */
+  @media (max-width: 900px) {
+    #app { grid-template-columns: 1fr; }
+    #filters-btn { display: inline-flex; }
+    aside { position: fixed; z-index: var(--z-sheet); left: 0; right: 0; bottom: 0; max-height: 82dvh; border-radius: 16px 16px 0 0; border: 0; box-shadow: 0 -8px 30px rgba(16,24,40,.2); transform: translateY(105%); transition: transform .25s cubic-bezier(.2,.8,.2,1); padding-top: 0; }
+    aside.open { transform: none; }
+    .side-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; background: var(--color-surface); padding: var(--sp-3) 0; margin-bottom: var(--sp-2); border-bottom: 1px solid var(--color-line); z-index: 1; }
+    .side-head h2 { margin: 0; font-size: var(--fs-lg); }
+    .side-head .iconbtn { position: static; }
+    #scrim { position: fixed; inset: 0; background: rgba(16,24,40,.35); z-index: calc(var(--z-sheet) - 1); }
+    #scrim.on { display: block; }
+    #details { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-width: none; max-height: 70%; border-radius: 16px 16px 0 0; }
+    #details.open { animation-name: slideup; }
+    @keyframes slideup { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+  }
+  @media (max-width: 640px) {
+    header { padding: var(--sp-2) var(--sp-3); gap: var(--sp-2); }
+    .brand { width: 100%; }
+    .brand h1 { font-size: 17px; }
+    .search { flex: 1 1 100%; order: 5; }
+    .search input { width: 100%; font-size: 16px; }
+    .legend-mini { bottom: 22px; }
+    .legend-mini .hide-sm { display: none; }
+    #list td.hide-sm, #list th.hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#list-toggle">Skip to the list view</a>
+<div id="app">
+  <header>
+    <div class="brand">
+      <h1>Flock Agency Transparency Map</h1>
+      <p>Snapshot: <b id="title-date">November 2026</b> · <span id="count" class="num" aria-live="polite"></span></p>
+    </div>
+    <div class="seg" role="group" aria-label="Snapshot">
+      <button type="button" data-s="2026-03" aria-pressed="false">March 2026</button>
+      <button type="button" data-s="2026-11" aria-pressed="true">November 2026</button>
+    </div>
+    <div class="seg" role="group" aria-label="View">
+      <button type="button" data-v="map" aria-pressed="true">Map</button>
+      <button type="button" data-v="list" id="list-toggle" aria-pressed="false">List</button>
+    </div>
+    <form class="search" role="search" id="search-form">
+      <label for="search" class="sr-only">Find an agency</label>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="search" type="search" list="agency-names" placeholder="Find an agency…" autocomplete="off">
+      <datalist id="agency-names"></datalist>
+      <span class="search-msg" id="search-msg" role="status"></span>
+    </form>
+    <button type="button" class="btn" id="filters-btn" aria-controls="side" aria-expanded="false">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+      Filters <span class="badge num" id="active-n" hidden></span>
+    </button>
+  </header>
+
+  <aside id="side" aria-label="Summary and filters">
+    <div class="side-head"><h2>Filters</h2>
+      <button type="button" class="iconbtn" id="side-close" aria-label="Close filters"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+
+    <section aria-labelledby="sum-h">
+      <h2 id="sum-h">What's shown</h2>
+      <div class="dist" id="dist" role="img"></div>
+      <p class="help" id="dist-text"></p>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <section aria-labelledby="lay-h">
+      <h2 id="lay-h">Layers</h2>
+      <label class="opt"><input type="checkbox" id="lay-matched" checked> Matched agencies <span class="n num" id="n-matched"></span></label>
+      <label class="opt" id="lay-new-wrap"><input type="checkbox" id="lay-new"> First seen in November <span class="n num" id="n-new"></span></label>
+      <p class="help">First seen in the November scrape, not necessarily new. November snapshot only.</p>
+    </section>
+
+    <section aria-labelledby="flt-h">
+      <h2 id="flt-h">Filters <button type="button" class="linkbtn" id="reset">Reset</button></h2>
+      <label for="f-state" class="help" style="display:block;margin-bottom:4px">State</label>
+      <select id="f-state"><option value="">All states</option></select>
+
+      <fieldset id="f-fill" style="border:0;padding:0;margin:var(--sp-3) 0 0"><legend class="help" style="padding:0;margin-bottom:2px">Disclosure score (fill)</legend></fieldset>
+      <fieldset id="f-ring" style="border:0;padding:0;margin:var(--sp-3) 0 0"><legend class="help" style="padding:0;margin-bottom:2px">Sharing ring: other U.S. states</legend></fieldset>
+      <p class="help">Rings show declared 1:1 sharing; network-level access isn't shown.</p>
+      <fieldset id="f-fed" style="border:0;padding:0;margin:var(--sp-3) 0 0"><legend class="help" style="padding:0;margin-bottom:2px">Federal recipient (center dot)</legend></fieldset>
+      <fieldset id="f-status" style="border:0;padding:0;margin:var(--sp-3) 0 0"><legend class="help" style="padding:0;margin-bottom:2px">Status</legend></fieldset>
+      <fieldset style="border:0;padding:0;margin:var(--sp-3) 0 0"><legend class="help" style="padding:0;margin-bottom:2px">Change</legend>
+        <label class="opt" id="f-changed-wrap"><input type="checkbox" id="f-changed"> Only changed since March <span class="n num" id="n-changed"></span></label>
+      </fieldset>
+      <p class="help">Fill band, ring class or federal badge changed (ring and badge only when the agency published its own list both times), plus removed portals. November only.</p>
+    </section>
+
+    <section aria-labelledby="about-h">
+      <h2 id="about-h">About</h2>
+      <p class="help">Each dot is one agency's Flock transparency portal, placed at its jurisdiction rather than its cameras. Everything reflects what portals declared at collection time, not actual sharing, searching or retention. Dots that share a point are offset by a few pixels.</p>
+    </section>
+  </aside>
+
+  <main id="main">
+    <div id="map" role="region" aria-label="Map of agencies. Use the List view for a keyboard-friendly table of the same agencies." tabindex="0"></div>
+    <div id="list" role="region" aria-label="Agency list"></div>
+    <div class="legend-mini" id="legend" aria-hidden="true"></div>
+    <div id="details" role="dialog" aria-modal="false" aria-labelledby="d-title"></div>
+    <div id="status" role="status"><div><div class="spinner"></div>Loading agencies…</div></div>
+  </main>
+  <div id="scrim"></div>
+</div>
+
+<script>
+const DATA_URL = '../flock-transparency-map-data/data/agencies.csv';
+const FILL = { '6': '#2c7bb6', '5': '#abd9e9', '4': '#fdae61', '0-3': '#d7191c' };
+const FILL_LABEL = { '6': 'Complete (6)', '5': 'Missing one (5)', '4': 'Missing two (4)', '0-3': 'Missing 3+ (0–3)' };
+const RINGS = ['none', 'thin', 'thick', 'gray'];
+const RING_LABEL = { none: 'None: no other states', thin: 'Thin: 1–19 states', thick: 'Thick: 20+ states', gray: 'Gray: sharing unknown' };
+const FED = [['1', 'Federal recipient listed'], ['0', 'No federal recipient'], ['', 'Unknown (no own list)']];
+const STATUS = ['Scored', 'Inactive', 'Removed', 'Unassessable'];
+const STATUS_LABEL = { Scored: 'Scored', Inactive: 'Inactive', Removed: 'Portal removed', Unassessable: 'Unassessable' };
+const FEATURES = [
+  ['retention', 'Retention period'], ['cameras', 'Camera count'], ['searches', 'Search count'],
+  ['audit', 'Search audit download'], ['sharing_list', 'Organizations granted access'], ['policy', 'ALPR policy'],
+];
+const SNAP_NAME = { '2026-03': 'March 2026', '2026-11': 'November 2026' };
+const DOT = 18, HIT = 26;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const ICON = {
+  yes: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-yes)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  no: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-no)" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>',
+  dot: '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="var(--color-ink-muted)"/></svg>',
+  close: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  ext: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+  sort: (dir) => `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${dir === 'ascending' ? '<path d="M6 15l6-6 6 6"/>' : dir === 'descending' ? '<path d="M6 9l6 6 6-6"/>' : '<path d="M8 10l4-4 4 4M8 14l4 4 4-4" opacity=".45"/>'}</svg>`,
+};
+
+// ---------- marker drawing (fixed outer diameter, rubric symbols) ----------
+function markerSVG(r, sz = DOT) {
+  let b = '';
+  if (r.status === 'Scored') {
+    const fill = FILL[r.fill_band] || '#ccc', ring = r.ring_class;
+    const dash = r.ring_dashed === '1' ? ' stroke-dasharray="2.2 1.5"' : '';
+    if (ring === 'thick') b += `<circle cx="8" cy="8" r="6.5" fill="#fff" stroke="#111" stroke-width="3"${dash}/>`;
+    else if (ring === 'thin') b += `<circle cx="8" cy="8" r="6.6" fill="#fff" stroke="#111" stroke-width="1.6"${dash}/>`;
+    else if (ring === 'gray') b += `<circle cx="8" cy="8" r="6.6" fill="#fff" stroke="#9aa0a6" stroke-width="1.6"/>`;
+    b += `<circle cx="8" cy="8" r="5" fill="${fill}" stroke="${ring === 'none' ? '#fff' : 'none'}" stroke-width="1"/>`;
+    if (r.federal_flag === '1') b += `<circle cx="8" cy="8" r="1.9" fill="#000" stroke="#fff" stroke-width="1.1"/>`;
+  } else if (r.status === 'Inactive') {
+    b = `<polygon points="8,1.8 14.2,8 8,14.2 1.8,8" fill="#8f959b" stroke="#fff" stroke-width="1"/>`;
+  } else if (r.status === 'Removed') {
+    const x = (c, w) => `<g stroke="${c}" stroke-width="${w}" stroke-linecap="round"><line x1="3.5" y1="3.5" x2="12.5" y2="12.5"/><line x1="12.5" y1="3.5" x2="3.5" y2="12.5"/></g>`;
+    b = x('#fff', 4.2) + x('#7d838a', 2.2);
+  } else {
+    b = `<rect x="3" y="3" width="10" height="10" fill="rgba(255,255,255,.9)" stroke="#8f959b" stroke-width="1.8"/>`;
+  }
+  return `<svg width="${sz}" height="${sz}" viewBox="0 0 16 16" aria-hidden="true">${b}</svg>`;
+}
+const sym = (o, sz = 16) => markerSVG(Object.assign({ status: 'Scored', fill_band: '5', ring_class: 'none', ring_dashed: '0', federal_flag: '0' }, o), sz);
+
+// ---------- state ----------
+let rows = [], byAgency = new Map(), offsets = new Map(), markers = new Map(), nameIndex = new Map();
+let snap = '2026-11', view = 'map', selected = null, lastShown = [];
+let sort = { key: 'name', dir: 'ascending' };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const dash = (s) => (s === '' || s == null) ? '<span class="muted">—</span>' : esc(s);
+const fmt = (n) => Number(n).toLocaleString();
+
+// Contiguous U.S. only (every agency in the data is in the lower 48)
+const US_BOUNDS = L.latLngBounds([24.0, -125.5], [49.6, -66.5]);
+const map = L.map('map', { zoomControl: true, keyboard: true, maxBounds: US_BOUNDS.pad(0.08), maxBoundsViscosity: 1, zoomSnap: 0.25 });
+function fitUS() {
+  const z = map.getBoundsZoom(US_BOUNDS, false, [8, 8]);
+  map.setMinZoom(z);
+  if (map.getZoom() === undefined || map.getZoom() < z || !map._loaded) map.fitBounds(US_BOUNDS, { padding: [8, 8] });
+}
+fitUS();
+map.on('resize', fitUS);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 16, attribution: 'Tiles &copy; Esri — Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS user community'
+}).addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 16, pane: 'shadowPane', opacity: 0.8
+}).addTo(map);
+// Mask everything outside the U.S. border (above basemap labels, below dots)
+map.createPane('mask').style.zIndex = 550;
+map.getPane('mask').style.pointerEvents = 'none';
+fetch('https://cdn.jsdelivr.net/npm/us-atlas@3.0.1/nation-10m.json').then(r => r.json()).then(topo => {
+  const geom = topojson.feature(topo, topo.objects.nation).features[0].geometry;
+  const polys = geom.type === 'MultiPolygon' ? geom.coordinates : [geom.coordinates];
+  const holes = polys.map(p => p[0].map(([lon, lat]) => [lat, lon]));
+  const world = [[89, -360], [89, 360], [-89, 360], [-89, -360]];
+  L.polygon([world, ...holes], { pane: 'mask', stroke: false, fillColor: '#f3f5f7', fillOpacity: 1, interactive: false }).addTo(map);
+  L.polygon(holes, { pane: 'mask', color: '#9aa3ad', weight: 1, fill: false, interactive: false }).addTo(map);
+}).catch(() => { /* the map still works without the mask; panning stays limited to the U.S. */ });
+const layer = L.layerGroup().addTo(map);
+
+// ---------- filters (read from the DOM so reset/hash restore are trivial) ----------
+function readFilters() {
+  const checked = (sel) => new Set([...document.querySelectorAll(sel)].filter(i => i.checked).map(i => i.value));
+  return {
+    state: $('f-state').value, fill: checked('#f-fill input'), ring: checked('#f-ring input[data-ring]'),
+    dashed: $('f-dashed').checked, fed: checked('#f-fed input'), status: checked('#f-status input'),
+    changed: $('f-changed').checked && snap === '2026-11',
+    matched: $('lay-matched').checked, isNew: $('lay-new').checked && snap === '2026-11',
+  };
+}
+function activeFilterCount() {
+  let n = 0;
+  if ($('f-state').value) n++;
+  for (const id of ['f-fill', 'f-ring', 'f-fed', 'f-status']) if ([...document.querySelectorAll(`#${id} input`)].some(i => !i.checked)) n++;
+  if ($('f-changed').checked) n++;
+  return n;
+}
+function baseRows(f) {
+  return rows.filter(r => r.snapshot === snap && ((r.cohort === 'matched' && f.matched) || (r.cohort === 'new' && f.isNew)));
+}
+function passes(r, f) {
+  if (f.state && r.state !== f.state) return false;
+  if (!f.status.has(r.status)) return false;
+  if (r.status === 'Scored') {
+    if (!f.fill.has(r.fill_band) || !f.ring.has(r.ring_class) || !f.fed.has(r.federal_flag)) return false;
+    if (!f.dashed && r.ring_dashed === '1') return false;
+  }
+  if (f.changed && !(r.changed_since_march === '1' || r.status === 'Removed')) return false;
+  return true;
+}
+
+// ---------- render ----------
+const ORDER = { Unassessable: 0, Removed: 1, Inactive: 2, Scored: 3 };
+function makeIcon(r) {
+  const [dx, dy] = offsets.get(r.agency_id) || [0, 0];
+  return L.divIcon({ className: 'marker' + (r.agency_id === selected ? ' sel' : ''), html: markerSVG(r), iconSize: [HIT, HIT], iconAnchor: [HIT / 2 - dx, HIT / 2 - dy] });
+}
+function tipHTML(r) {
+  const line = r.status === 'Scored'
+    ? `Score ${esc(r.score)}/6 · ${r.ring_class === 'gray' ? 'sharing unknown' : `${esc(statesNum(r))} other states`}${r.federal_flag === '1' ? ' · federal' : ''}`
+    : STATUS_LABEL[r.status];
+  return `<b>${esc(r.name)}</b><br><small>${line}</small>`;
+}
+
+function render() {
+  const f = readFilters();
+  $('title-date').textContent = SNAP_NAME[snap];
+  $('main').classList.toggle('listing', view === 'list');
+  document.querySelectorAll('[data-s]').forEach(b => b.setAttribute('aria-pressed', b.dataset.s === snap));
+  document.querySelectorAll('[data-v]').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === view));
+  const nov = snap === '2026-11';
+  for (const [inp, wrap] of [['lay-new', 'lay-new-wrap'], ['f-changed', 'f-changed-wrap']]) { $(inp).disabled = !nov; $(wrap).classList.toggle('disabled', !nov); }
+
+  const base = baseRows(f);
+  const shown = base.filter(r => passes(r, f)).sort((a, b) => ORDER[a.status] - ORDER[b.status]);
+  lastShown = shown;
+
+  layer.clearLayers(); markers.clear();
+  for (const r of shown) {
+    const m = L.marker([+r.lat, +r.lon], { icon: makeIcon(r), keyboard: false, alt: r.name, zIndexOffset: ORDER[r.status] * 1000 + (r.agency_id === selected ? 10000 : 0) });
+    m.bindTooltip(tipHTML(r), { className: 'tip', direction: 'top', offset: [0, -10], opacity: 1 });
+    m.on('click', () => select(r.agency_id, { pan: false }));
+    layer.addLayer(m); markers.set(r.agency_id, m);
+  }
+
+  $('count').textContent = `showing ${fmt(shown.length)} of ${fmt(base.length)} agencies`;
+  const n = activeFilterCount(); $('active-n').hidden = !n; $('active-n').textContent = n;
+  updateCounts(base); updateSummary(shown); renderLegend();
+  if (view === 'list') renderList();
+  showDetails(false); writeHash();
+}
+
+function updateCounts(base) {
+  const sr = rows.filter(r => r.snapshot === snap);
+  $('n-matched').textContent = fmt(sr.filter(r => r.cohort === 'matched').length);
+  $('n-new').textContent = snap === '2026-11' ? fmt(sr.filter(r => r.cohort === 'new').length) : '—';
+  const sc = base.filter(r => r.status === 'Scored');
+  const set = (id, v) => { const el = $(id); if (el) el.textContent = fmt(v); };
+  for (const k of Object.keys(FILL)) set('n-fill-' + k, sc.filter(r => r.fill_band === k).length);
+  for (const k of RINGS) set('n-ring-' + k, sc.filter(r => r.ring_class === k).length);
+  set('n-ring-dashed', sc.filter(r => r.ring_dashed === '1').length);
+  for (const [k] of FED) set('n-fed-' + (k || 'u'), sc.filter(r => r.federal_flag === k).length);
+  for (const s of STATUS) set('n-st-' + s, base.filter(r => r.status === s).length);
+  $('n-changed').textContent = snap === '2026-11' ? fmt(base.filter(r => r.changed_since_march === '1' || r.status === 'Removed').length) : '—';
+}
+
+function updateSummary(shown) {
+  const sc = shown.filter(r => r.status === 'Scored');
+  const counts = ['6', '5', '4', '0-3'].map(k => [k, sc.filter(r => r.fill_band === k).length]);
+  const tot = sc.length || 1;
+  $('dist').innerHTML = counts.map(([k, c]) => `<span style="width:${(100 * c / tot).toFixed(2)}%;background:${FILL[k]}" title="${FILL_LABEL[k]}: ${c}"></span>`).join('');
+  const text = sc.length ? counts.map(([k, c]) => `${fmt(c)} ${FILL_LABEL[k].toLowerCase()}`).join(' · ') : 'No scored agencies match the filters.';
+  $('dist').setAttribute('aria-label', `Disclosure scores of ${sc.length} scored agencies: ${text}`);
+  $('dist-text').textContent = text;
+  const pct = (n) => sc.length ? Math.round(100 * n / sc.length) + '%' : '—';
+  const thick = sc.filter(r => r.ring_class === 'thick').length;
+  const fed = sc.filter(r => r.federal_flag === '1').length;
+  const pol = sc.filter(r => r.f_policy === '1').length;
+  $('stats').innerHTML = [
+    [pct(thick), 'share with 20+ other states'], [pct(fed), 'list a federal recipient'], [pct(pol), 'publish an ALPR policy'],
+  ].map(([v, l]) => `<div class="stat"><b class="num">${v}</b><span>${l}</span></div>`).join('');
+}
+
+function renderLegend() {
+  $('legend').innerHTML = `
+    <div class="row"><b>${SNAP_NAME[snap]}</b>
+      ${['6', '5', '4', '0-3'].map(k => `<span>${sym({ fill_band: k }, 14)}${k}</span>`).join('')}</div>
+    <div class="row">
+      <span>${sym({ ring_class: 'thin' }, 14)}1–19 states</span><span>${sym({ ring_class: 'thick' }, 14)}20+</span>
+      <span class="hide-sm">${sym({ ring_class: 'thin', ring_dashed: '1' }, 14)}from others</span>
+      <span>${sym({ federal_flag: '1' }, 14)}federal</span>
+      <span class="hide-sm">${sym({ status: 'Inactive' }, 14)}inactive</span><span class="hide-sm">${sym({ status: 'Unassessable' }, 14)}unassessable</span></div>
+    <div class="note hide-sm">Rings show declared 1:1 sharing; network-level access isn't shown.</div>`;
+}
+
+// ---------- list view (text alternative to the map; follows the filters) ----------
+const COLS = [
+  ['name', 'Agency', r => r.name.toLowerCase()],
+  ['state', 'State', r => r.state],
+  ['status', 'Status', r => ORDER[r.status] * -1],
+  ['score', 'Score', r => r.status === 'Scored' ? +r.score : -1],
+  ['states', 'Other states', r => r.status === 'Scored' && r.ring_class !== 'gray' ? +r.other_states_low : -1, 'hide-sm'],
+  ['fed', 'Federal', r => r.federal_flag === '1' ? 1 : r.federal_flag === '0' ? 0 : -1, 'hide-sm'],
+];
+function renderList() {
+  const col = COLS.find(c => c[0] === sort.key), dir = sort.dir === 'ascending' ? 1 : -1;
+  const data = [...lastShown].sort((a, b) => { const x = col[2](a), y = col[2](b); return (x > y ? 1 : x < y ? -1 : a.name.localeCompare(b.name)) * dir; });
+  if (!data.length) { $('list').innerHTML = `<div class="empty"><p>No agencies match these filters.</p><button class="btn" onclick="resetFilters()">Reset filters</button></div>`; return; }
+  const head = COLS.map(([k, l, , cls]) => {
+    const s = sort.key === k ? sort.dir : 'none';
+    return `<th scope="col" aria-sort="${s}" class="${cls || ''}"><button type="button" data-sort="${k}">${l} ${ICON.sort(s)}</button></th>`;
+  }).join('');
+  const body = data.map(r => {
+    const scoreCell = r.status === 'Scored' ? `<span class="sym">${sym({ fill_band: r.fill_band }, 14)}<span class="num">${esc(r.score)}/6</span></span>` : '<span class="muted">—</span>';
+    const statesCell = r.status !== 'Scored' ? '<span class="muted">—</span>' : r.ring_class === 'gray' ? '<span class="muted">unknown</span>' : `<span class="num">${esc(statesNum(r))}</span>`;
+    return `<tr data-id="${esc(r.agency_id)}" class="${r.agency_id === selected ? 'sel' : ''}">
+      <td class="name"><button type="button" data-open="${esc(r.agency_id)}">${esc(r.name)}</button></td>
+      <td>${esc(r.state)}</td>
+      <td><span class="sym">${markerSVG(r, 14)}${STATUS_LABEL[r.status]}</span></td>
+      <td>${scoreCell}</td>
+      <td class="hide-sm">${statesCell}</td>
+      <td class="hide-sm">${r.federal_flag === '1' ? 'Yes' : r.federal_flag === '0' ? 'No' : '<span class="muted">unknown</span>'}</td></tr>`;
+  }).join('');
+  $('list').innerHTML = `<table><caption class="sr-only">${fmt(data.length)} agencies, ${SNAP_NAME[snap]}, sorted by ${col[1]} ${sort.dir}</caption><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+$('list').addEventListener('click', (e) => {
+  const s = e.target.closest('[data-sort]');
+  if (s) { const k = s.dataset.sort; sort = { key: k, dir: sort.key === k && sort.dir === 'ascending' ? 'descending' : 'ascending' }; renderList(); $('list').querySelector(`[data-sort="${k}"]`).focus(); return; }
+  const tr = e.target.closest('tr[data-id]');
+  if (tr) select(tr.dataset.id, { pan: false, focus: true });
+});
+
+// ---------- selection & details ----------
+function select(id, { pan = true, focus = true } = {}) {
+  const prev = selected; selected = id;
+  for (const aid of [prev, id]) {
+    const m = markers.get(aid); if (!m) continue;
+    const r = byAgency.get(aid).get(snap);
+    m.setIcon(makeIcon(r)); m.setZIndexOffset(ORDER[r.status] * 1000 + (aid === id ? 10000 : 0));
+  }
+  if (view === 'list') $('list').querySelectorAll('tr[data-id]').forEach(tr => tr.classList.toggle('sel', tr.dataset.id === id));
+  if (pan && id) {
+    const r = byAgency.get(id).values().next().value;
+    const z = Math.max(map.getZoom(), 9);
+    reduceMotion ? map.setView([+r.lat, +r.lon], z) : map.flyTo([+r.lat, +r.lon], z, { duration: 0.8 });
+  }
+  showDetails(focus); writeHash();
+}
+function closeDetails() {
+  const was = selected; select(null, { pan: false, focus: false });
+  const row = was && $('list').querySelector(`[data-open="${CSS.escape(was)}"]`);
+  (row || $(view === 'list' ? 'list-toggle' : 'map')).focus();
+}
+
+function featureRow(r, key, label) {
+  const ok = r['f_' + key] === '1';
+  let val = key === 'sharing_list' ? r.sharing_list_value : key === 'policy' ? r.policy_value : r[key + '_value'];
+  const meta = [];
+  if (!['sharing_list', 'policy'].includes(key)) {
+    if (r[key + '_label']) meta.push(esc(r[key + '_label']));
+    if (r[key + '_period_days']) meta.push(`last ${esc(r[key + '_period_days'])} days`);
+  }
+  const v = val ? (/^https?:\/\//.test(val) ? `<a href="${esc(val)}" target="_blank" rel="noopener">${esc(val)} ${ICON.ext}</a>` : esc(val)) : '<span class="muted">not shown</span>';
+  return `<div class="feat">${ok ? ICON.yes : ICON.no}<div><span class="sr-only">${ok ? 'Disclosed' : 'Missing'}: </span><b>${label}</b> <span class="val">${v}</span>${meta.length ? `<small>${meta.join(' · ')}</small>` : ''}</div></div>`;
+}
+function unscoredRow(r, key, label) {
+  const na = (r.data_unavailable_fields || '').split('; ').includes(key);
+  const meta = [r[key + '_label'], r[key + '_period_days'] ? `last ${r[key + '_period_days']} days` : ''].filter(Boolean).map(esc).join(' · ');
+  return `<div class="feat">${ICON.dot}<div><b>${label}</b> <span class="val">${na ? '<span class="warn">Data Unavailable</span>' : dash(r[key + '_value'])}</span>${meta ? `<small>${meta}</small>` : ''}</div></div>`;
+}
+function names(label, s) { return s ? `<dt>${label}</dt><dd><div class="names">${s.split('; ').map(esc).join('<br>')}</div></dd>` : ''; }
+function ringText(r) {
+  if (r.status !== 'Scored') return '—';
+  if (r.ring_class === 'gray') return 'Unknown';
+  return `${statesNum(r)} other states${r.ring_dashed === '1' ? ' (from other portals)' : ''}`;
+}
+const statesNum = (r) => `${r.ring_bounded === '1' ? '≥' : ''}${r.other_states_low}`;
+function compareBlock(a) {
+  const m = a.get('2026-03'), n = a.get('2026-11');
+  if (!m || !n) return '';
+  const cell = (r, f) => r.status === 'Scored' ? f(r) : STATUS_LABEL[r.status];
+  const rowsC = [
+    ['Status', r => STATUS_LABEL[r.status], true],
+    ['Score', r => cell(r, x => `${x.score}/6`)],
+    ['Other states', r => cell(r, ringText)],
+    ['Federal', r => cell(r, x => x.federal_flag === '1' ? 'Yes' : x.federal_flag === '0' ? 'No' : 'Unknown')],
+  ];
+  const g = rowsC.map(([l, f]) => { const x = f(m), y = f(n); return `<span class="h">${l}</span><span>${esc(x)}</span><span class="${x !== y ? 'chg' : ''}">${esc(y)}</span>`; }).join('');
+  let verdict = '';
+  if (n.status_change || n.change_summary) verdict = [n.status_change && `Status ${n.status_change}`, n.change_summary].filter(Boolean).map(esc).join('; ');
+  else if (n.changed_since_march === '0') verdict = 'No change in fill band, ring class or federal badge.';
+  else verdict = 'Not comparable: not Scored in both snapshots.';
+  return `<h3>Change since March</h3><div class="compare"><span></span><span class="h">Mar 2026</span><span class="h">Nov 2026</span>${g}</div><p class="help">${verdict}</p>`;
+}
+
+function showDetails(focus) {
+  const el = $('details');
+  $('main').classList.toggle('has-detail', !!(selected && byAgency.has(selected)));
+  if (!selected || !byAgency.has(selected)) { el.classList.remove('open'); el.innerHTML = ''; return; }
+  const a = byAgency.get(selected), r = a.get(snap);
+  let h = `<div class="d-head"><button type="button" class="iconbtn" aria-label="Close details" data-close>${ICON.close}</button>`;
+  if (!r) {
+    const any = a.values().next().value;
+    h += `<h2 id="d-title" tabindex="-1">${esc(any.name)}</h2><div class="d-sub">${esc(any.state)}</div></div>
+      <div class="d-body"><p>This portal was first seen in the November scrape, so it isn't in the ${SNAP_NAME[snap]} snapshot.</p>
+      <button type="button" class="btn" data-go-nov>Show November 2026</button></div>`;
+  } else {
+    h += `<h2 id="d-title" tabindex="-1">${esc(r.name)}</h2>
+      <div class="d-sub">${esc(r.state)} · ${esc(r.agency_type)} · ${r.cohort === 'new' ? 'first seen in November' : 'matched portal'}</div>`;
+    if (r.status === 'Scored') {
+      const segs = Array.from({ length: 6 }, (_, i) => `<i style="${i < +r.score ? `background:${FILL[r.fill_band]}` : ''}"></i>`).join('');
+      const missing = r.missing_features ? r.missing_features.split('; ').map(m => (FEATURES.find(f => f[0] === m) || [m, m])[1]).join(', ') : 'Nothing — complete';
+      h += `<div class="scorecard">${sym({ ...r }, 34)}<div><div class="big num">${esc(r.score)}<small> / 6 disclosed</small></div><div class="meter" aria-hidden="true">${segs}</div></div></div>
+        <p class="help" style="margin-top:6px"><b>Missing:</b> ${esc(missing)}</p>`;
+    } else {
+      h += `<div class="scorecard">${markerSVG(r, 30)}<div><b>${STATUS_LABEL[r.status]}</b><div class="help">${esc(r.status_detail || 'No score for this snapshot.')}</div></div></div>`;
+    }
+    h += `</div><div class="d-body">
+      <h3>Portal</h3><dl class="kv">
+        <dt>Link</dt><dd><a href="${esc(r.portal_url)}" target="_blank" rel="noopener">${esc(r.portal_url.replace('https://', ''))} ${ICON.ext}</a></dd>
+        <dt>Collected</dt><dd class="num">${esc(r.collected_at.replace('T', ' '))}${r.collected_at.includes('T') ? ' UTC' : ''}</dd>
+        <dt>Status</dt><dd>${STATUS_LABEL[r.status]}</dd>
+        <dt>Position</dt><dd class="muted">${esc(r.geocode_basis)}</dd></dl>`;
+    if (r.status === 'Scored') {
+      h += `<h3>Disclosures</h3>${FEATURES.map(([k, l]) => featureRow(r, k, l)).join('')}
+        <h3>Reported, not scored</h3>${unscoredRow(r, 'detections', 'Vehicle detections')}${unscoredRow(r, 'hotlist_hits', 'Hotlist hits')}
+        <h3>Sharing</h3><dl class="kv">
+          <dt>Other states</dt><dd><b>${esc(ringText(r))}</b>${r.n_unresolved && r.n_unresolved !== '0' ? ` <span class="muted">· ${esc(r.n_unresolved)} unresolved names</span>` : ''}</dd>
+          ${r.other_states_list ? `<dt>States</dt><dd>${esc(r.other_states_list)}</dd>` : ''}
+          <dt>Own list</dt><dd>${r.list_published === '1' ? `Published · ${fmt(r.n_recipients)} names${r.n_stale && r.n_stale !== '0' ? ` (${esc(r.n_stale)} stale)` : ''}` : 'Not published'}</dd>
+          ${r.other_portals_naming && r.other_portals_naming !== '0' ? `<dt>Named by</dt><dd>${fmt(r.other_portals_naming)} other portals' inbound lists</dd>` : ''}
+          <dt>Federal</dt><dd>${r.federal_flag === '1' ? 'Yes' : r.federal_flag === '0' ? 'No' : '<span class="muted">Unknown (no own list)</span>'}</dd>
+          ${names('Federal names', r.federal_names)}${names('Multi-state', r.multistate_names)}${names('Tribal', r.tribal_names)}${names('Flock/test', r.flock_test_names)}
+        </dl>`;
+    }
+    h += compareBlock(a) + `</div>`;
+  }
+  el.innerHTML = h; el.classList.add('open');
+  if (focus) $('d-title').focus({ preventScroll: true });
+}
+$('details').addEventListener('click', (e) => {
+  if (e.target.closest('[data-close]')) closeDetails();
+  if (e.target.closest('[data-go-nov]')) { snap = '2026-11'; $('lay-new').checked = true; render(); select(selected); }
+});
+
+// ---------- UI construction ----------
+function opt(container, { id, value = '', label, checked = true, extra = '' }) {
+  container.insertAdjacentHTML('beforeend', `<label class="opt"><input type="checkbox" value="${esc(value)}" ${extra} ${checked ? 'checked' : ''}> ${label} <span class="n num" id="${id}"></span></label>`);
+}
+function buildUI() {
+  for (const k of ['6', '5', '4', '0-3']) opt($('f-fill'), { id: 'n-fill-' + k, value: k, label: `${sym({ fill_band: k })} ${FILL_LABEL[k]}` });
+  for (const k of RINGS) opt($('f-ring'), { id: 'n-ring-' + k, value: k, extra: 'data-ring', label: `${sym({ ring_class: k })} ${RING_LABEL[k]}` });
+  opt($('f-ring'), { id: 'n-ring-dashed', label: `${sym({ ring_class: 'thin', ring_dashed: '1' })} Dashed: no own list (minimum)`, extra: 'id="f-dashed"' });
+  for (const [k, l] of FED) opt($('f-fed'), { id: 'n-fed-' + (k || 'u'), value: k, label: `${sym({ federal_flag: k === '1' ? '1' : '0' })} ${l}` });
+  for (const s of STATUS) opt($('f-status'), { id: 'n-st-' + s, value: s, label: `${sym({ status: s })} ${STATUS_LABEL[s]}` });
+
+  const states = [...new Set(rows.map(r => r.state))].filter(Boolean).sort();
+  $('f-state').insertAdjacentHTML('beforeend', states.map(s => `<option>${esc(s)}</option>`).join(''));
+  const seen = new Set();
+  $('agency-names').innerHTML = [...byAgency.values()].map(a => a.get('2026-11') || a.get('2026-03'))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .filter(r => !seen.has(r.name) && seen.add(r.name))
+    .map(r => `<option value="${esc(r.name)}">${esc(r.state)}</option>`).join('');
+
+  $('side').addEventListener('change', render);
+  $('reset').addEventListener('click', resetFilters);
+  document.querySelectorAll('[data-s]').forEach(b => b.addEventListener('click', () => { snap = b.dataset.s; render(); }));
+  document.querySelectorAll('[data-v]').forEach(b => b.addEventListener('click', () => setView(b.dataset.v)));
+  $('search-form').addEventListener('submit', (e) => { e.preventDefault(); findAgency($('search').value); });
+  $('search').addEventListener('change', () => { if (nameIndex.has($('search').value.trim().toLowerCase())) findAgency($('search').value); });
+  $('search').addEventListener('input', () => { $('search-msg').textContent = ''; });
+
+  const sheet = (open) => { $('side').classList.toggle('open', open); $('scrim').classList.toggle('on', open); $('filters-btn').setAttribute('aria-expanded', open); if (open) $('side-close').focus(); else $('filters-btn').focus(); };
+  $('filters-btn').addEventListener('click', () => sheet(true));
+  $('side-close').addEventListener('click', () => sheet(false));
+  $('scrim').addEventListener('click', () => sheet(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if ($('side').classList.contains('open')) sheet(false);
+    else if (selected) closeDetails();
+  });
+}
+function resetFilters() {
+  $('f-state').value = '';
+  document.querySelectorAll('#f-fill input, #f-ring input, #f-fed input, #f-status input').forEach(i => i.checked = true);
+  $('f-changed').checked = false;
+  render();
+}
+function setView(v) {
+  view = v;
+  $('list').classList.toggle('on', v === 'list');
+  $('legend').style.display = v === 'list' ? 'none' : '';
+  if (v === 'map') setTimeout(() => map.invalidateSize(), 0);
+  render();
+}
+function findAgency(q) {
+  const id = nameIndex.get(q.trim().toLowerCase());
+  if (!id) {
+    const hits = [...nameIndex.keys()].filter(k => k.includes(q.trim().toLowerCase()));
+    if (hits.length === 1) return findAgency(hits[0]);
+    $('search-msg').textContent = q.trim() ? (hits.length ? `${hits.length} matches. Pick one from the list.` : 'No agency by that name.') : '';
+    return;
+  }
+  $('search-msg').textContent = '';
+  const a = byAgency.get(id);
+  if (!a.has(snap)) snap = '2026-11';
+  if (a.get(snap).cohort === 'new') $('lay-new').checked = true;
+  else $('lay-matched').checked = true;
+  render(); select(id);
+}
+
+// ---------- shared-point offsets ----------
+function computeOffsets() {
+  const groups = new Map();
+  for (const [id, a] of byAgency) { const r = a.values().next().value; const k = r.lat + ',' + r.lon; (groups.get(k) || groups.set(k, []).get(k)).push(id); }
+  for (const ids of groups.values()) {
+    ids.sort();
+    ids.forEach((id, i) => {
+      if (ids.length === 1) return offsets.set(id, [0, 0]);
+      const ringN = Math.min(ids.length, 6), rad = 9 + 3 * Math.floor(i / 6);
+      const ang = (2 * Math.PI * (i % 6)) / ringN + (i >= 6 ? 0.5 : 0);
+      offsets.set(id, [Math.round(rad * Math.cos(ang)), Math.round(rad * Math.sin(ang))]);
+    });
+  }
+}
+
+// ---------- deep links: #s=2026-11&a=agency&v=list&st=CA&new=1&chg=1 ----------
+function writeHash() {
+  const p = new URLSearchParams();
+  p.set('s', snap);
+  if (selected) p.set('a', selected);
+  if (view === 'list') p.set('v', 'list');
+  if ($('f-state').value) p.set('st', $('f-state').value);
+  if ($('lay-new').checked) p.set('new', '1');
+  if ($('f-changed').checked) p.set('chg', '1');
+  history.replaceState(null, '', '#' + p.toString());
+}
+function readHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  if (SNAP_NAME[p.get('s')]) snap = p.get('s');
+  if (p.get('st')) $('f-state').value = p.get('st');
+  if (p.get('new') === '1') $('lay-new').checked = true;
+  if (p.get('chg') === '1') $('f-changed').checked = true;
+  if (p.get('v') === 'list') { view = 'list'; $('list').classList.add('on'); $('legend').style.display = 'none'; }
+  const a = p.get('a');
+  if (a && byAgency.has(a)) {
+    selected = a;
+    if (byAgency.get(a).get(snap)?.cohort === 'new') $('lay-new').checked = true;
+    const r = byAgency.get(a).values().next().value; map.setView([+r.lat, +r.lon], 9);
+  }
+}
+
+// ---------- load ----------
+function load() {
+  $('status').style.display = '';
+  $('status').innerHTML = '<div><div class="spinner"></div>Loading agencies…</div>';
+  Papa.parse(DATA_URL, {
+    download: true, header: true, skipEmptyLines: true,
+    complete: (res) => {
+      rows = res.data.filter(r => r.lat && r.lon);
+      if (!rows.length) return fail('The file loaded but had no agencies with positions.');
+      for (const r of rows) {
+        if (!byAgency.has(r.agency_id)) byAgency.set(r.agency_id, new Map());
+        byAgency.get(r.agency_id).set(r.snapshot, r);
+        nameIndex.set(r.name.toLowerCase(), r.agency_id);
+      }
+      computeOffsets(); buildUI(); readHash(); render();
+      $('status').style.display = 'none';
+    },
+    error: (err) => fail(`Couldn't load agencies.csv (${esc(err && err.message || err)}).`),
+  });
+}
+function fail(msg) {
+  $('status').innerHTML = `<div><p style="max-width:420px">${msg} Serve the repository over http, for example <code>python3 -m http.server</code> from the repo root, then open <code>/map/</code>.</p><button class="btn" onclick="load()">Try again</button></div>`;
+}
+load();
+</script>
+</body>
+</html>
